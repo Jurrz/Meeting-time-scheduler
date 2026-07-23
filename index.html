@@ -169,8 +169,8 @@
           </label>
           <label style="flex:1">Client hours
             <span style="display:flex; gap:6px">
-              <select id="s-ws"><option>7</option><option>8</option><option selected>9</option><option>10</option></select>
-              <select id="s-we"><option>15</option><option>16</option><option selected>17</option><option>18</option></select>
+              <select id="s-ws"><option value="7">7:00</option><option value="8">8:00</option><option value="8.5" selected>8:30</option><option value="9">9:00</option><option value="10">10:00</option></select>
+              <select id="s-we"><option value="15">15:00</option><option value="16">16:00</option><option value="17" selected>17:00</option><option value="18">18:00</option></select>
             </span>
           </label>
         </div>
@@ -227,11 +227,12 @@ const esc = s => s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "
 
 /* ---------- state + persistence ---------- */
 const KEY = "sg-scheduler-data";
-let state = { events: [], clientTz: "America/Chicago", duration: 60, workStart: 9, workEnd: 17, view: "calendar", weekOff: 0 };
+let state = { events: [], clientTz: "America/Chicago", duration: 60, workStart: 8.5, workEnd: 17, view: "calendar", weekOff: 0 };
 try {
   const saved = JSON.parse(localStorage.getItem(KEY));
   if (saved && typeof saved === "object") state = { ...state, ...saved, weekOff: 0 };
 } catch (e) {}
+if (state.workStart > 8.5) state.workStart = 8.5; // rule: start no later than 8:30 AM client time
 function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
 
 /* ---------- suggestion engine ---------- */
@@ -285,7 +286,7 @@ function renderRibbon() {
   for (let h = 0; h < 24; h++) {
     const utc = sgWallToUtc(p.y, p.mo, p.d, h, 0);
     const c = partsIn(state.clientTz, utc);
-    const working = c.h >= state.workStart && c.h < state.workEnd && c.dow !== "Sat" && c.dow !== "Sun";
+    const working = (c.h + 1) > state.workStart && c.h < state.workEnd && c.dow !== "Sat" && c.dow !== "Sun";
     const sweet = working && (h >= 18 || h === 0);
     html += `<div class="rc ${working ? "working" : ""} ${sweet ? "sweet" : ""}" title="SG ${h}:00 → client ${c.h}:00"><div class="sg">${h}</div><div class="cl">${c.h}</div></div>`;
   }
