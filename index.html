@@ -51,12 +51,12 @@
   .hint { font-size: 11.5px; color: #6B7080; margin-top: 10px; line-height: 1.5; }
   .week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
   @media (max-width: 760px) { .week { grid-template-columns: repeat(2, 1fr); } }
-  .day { border: 1px solid #E9EAEF; border-radius: 10px; min-height: 190px; background: #fff; overflow: hidden; }
+  .day { border: 1px solid #E9EAEF; border-radius: 10px; min-height: 380px; background: #fff; overflow: hidden; }
   .day.today { border: 2px solid #2F2E5F; background: #F7F7FC; }
   .day-head { font-size: 12px; font-weight: 700; padding: 7px 8px; background: #F1F2F5; color: #454B63; }
   .day.today .day-head { background: #2F2E5F; color: #fff; }
   .day-body { padding: 7px; display: flex; flex-direction: column; gap: 6px; }
-  .free { font-size: 11px; color: #B9BDC9; text-align: center; padding-top: 24px; }
+  .free { font-size: 11px; color: #B9BDC9; text-align: center; padding-top: 150px; }
   .chip { background: #EEF3F0; border-left: 3px solid #1F7A5C; border-radius: 6px; padding: 6px 7px; position: relative; }
   .chip .t { font-size: 11.5px; font-weight: 700; color: #1F7A5C; }
   .chip .n { font-size: 12px; margin-top: 2px; padding-right: 12px; word-break: break-word; }
@@ -154,6 +154,41 @@
             <span id="copy-ok" class="hint" style="display:none; margin:0">Copied ✓</span>
             <span class="hint" style="margin:0">Feel free to edit the text before copying.</span>
           </div>
+        </div>
+      </div>
+
+      <div style="border-top:1px solid #E9EAEF; margin-top:16px; padding-top:16px">
+        <div class="card-title">Convert a client's proposed time</div>
+        <div class="hint" style="margin:0 0 10px">A client replied with a time? Enter it exactly as they wrote it — including their time zone abbreviation — and see it in US Central and Singapore time.</div>
+        <div class="control-row" style="flex-wrap:wrap; align-items:flex-end">
+          <label>Date (client)<input id="c-date" type="date" style="width:auto"></label>
+          <label>Time (client)<input id="c-time" type="time" style="width:auto"></label>
+          <label>Time zone
+            <select id="c-zone" style="width:auto">
+              <optgroup label="Central">
+                <option value="CT">CT (auto DST)</option><option value="CST">CST (UTC−6)</option><option value="CDT">CDT (UTC−5)</option>
+              </optgroup>
+              <optgroup label="Eastern">
+                <option value="ET">ET (auto DST)</option><option value="EST">EST (UTC−5)</option><option value="EDT">EDT (UTC−4)</option>
+              </optgroup>
+              <optgroup label="Mountain">
+                <option value="MT">MT (auto DST)</option><option value="MST">MST (UTC−7)</option><option value="MDT">MDT (UTC−6)</option>
+              </optgroup>
+              <optgroup label="Pacific">
+                <option value="PT">PT (auto DST)</option><option value="PST">PST (UTC−8)</option><option value="PDT">PDT (UTC−7)</option>
+              </optgroup>
+              <optgroup label="Atlantic (Canada)">
+                <option value="AT">AT (auto DST)</option><option value="AST">AST (UTC−4)</option><option value="ADT">ADT (UTC−3)</option>
+              </optgroup>
+            </select>
+          </label>
+          <button class="primary" id="btn-conv" style="height:34px">Convert</button>
+        </div>
+        <div id="c-err" class="err" style="display:none"></div>
+        <div id="c-out" style="display:none; margin-top:12px">
+          <div id="c-result" style="font-size:13.5px; line-height:2"></div>
+          <div id="c-warn" class="hint" style="display:none; background:#FBEED3; color:#8A6A1F; border-radius:8px; padding:8px 10px; margin-top:8px"></div>
+          <button class="ghost" id="btn-conv-add" style="margin-top:10px">Add to my calendar</button>
         </div>
       </div>
     </div>
@@ -507,6 +542,65 @@ $("btn-copy").onclick = async () => {
   const nc = partsIn(state.clientTz, Date.now());
   const mk = off => { const d = new Date(Date.UTC(nc.y, nc.mo, nc.d + off)); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`; };
   $("a-from").value = mk(1); $("a-to").value = mk(8);
+})();
+
+/* ---------- client time converter ---------- */
+const ABBR_OFFSETS = { CST: -360, CDT: -300, EST: -300, EDT: -240, MST: -420, MDT: -360, PST: -480, PDT: -420, AST: -240, ADT: -180 };
+const ABBR_FAMILY = {
+  CT: "America/Chicago", CST: "America/Chicago", CDT: "America/Chicago",
+  ET: "America/New_York", EST: "America/New_York", EDT: "America/New_York",
+  MT: "America/Denver", MST: "America/Denver", MDT: "America/Denver",
+  PT: "America/Los_Angeles", PST: "America/Los_Angeles", PDT: "America/Los_Angeles",
+  AT: "America/Halifax", AST: "America/Halifax", ADT: "America/Halifax",
+};
+const FAMILY_NAMES = { "America/Chicago": ["CST", "CDT", "Central"], "America/New_York": ["EST", "EDT", "Eastern"], "America/Denver": ["MST", "MDT", "Mountain"], "America/Los_Angeles": ["PST", "PDT", "Pacific"], "America/Halifax": ["AST", "ADT", "Atlantic"] };
+const ctLabel = utc => tzOffsetMin("America/Chicago", utc) === -300 ? "CDT" : "CST";
+let convertedUtc = null;
+
+$("btn-conv").onclick = () => {
+  const date = $("c-date").value, time = $("c-time").value, zone = $("c-zone").value;
+  const err = $("c-err"), out = $("c-out"), warn = $("c-warn");
+  const fail = m => { err.textContent = m; err.style.display = ""; out.style.display = "none"; };
+  if (!date || !time) return fail("Fill in both the date and the time.");
+  err.style.display = "none";
+  const [y, mo, d] = date.split("-").map(Number);
+  const [hh, mm] = time.split(":").map(Number);
+  const family = ABBR_FAMILY[zone];
+  let utc;
+  if (zone in ABBR_OFFSETS) {
+    utc = Date.UTC(y, mo - 1, d, hh, mm) - ABBR_OFFSETS[zone] * 60000; // literal fixed offset
+  } else {
+    utc = wallToUtc(family, y, mo - 1, d, hh, mm); // CT/ET/… resolve DST for that date
+  }
+  convertedUtc = utc;
+  $("c-result").innerHTML =
+    `<div><span class="who cl" style="width:auto; margin-right:8px">US CENTRAL</span> <b>${fmtDate("America/Chicago", utc)}, ${fmtTime("America/Chicago", utc)}</b> (${ctLabel(utc)})</div>` +
+    `<div><span class="who sg" style="width:auto; margin-right:8px">SINGAPORE</span> <b>${fmtDate(SG_TZ, utc)}, ${fmtTime24(SG_TZ, utc)}</b></div>`;
+  // warn if a fixed abbreviation doesn't match what that zone actually observes on that date
+  warn.style.display = "none";
+  if (zone in ABBR_OFFSETS) {
+    const actual = tzOffsetMin(family, utc);
+    if (actual !== ABBR_OFFSETS[zone]) {
+      const [stAb, dtAb, famName] = FAMILY_NAMES[family];
+      const meant = actual === ABBR_OFFSETS[dtAb] ? dtAb : stAb;
+      const altUtc = wallToUtc(family, y, mo - 1, d, hh, mm);
+      warn.innerHTML = `⚠ Heads-up: on that date, US/Canada ${famName} clocks are actually on <b>${meant}</b>, not ${zone} — people often write the wrong abbreviation. If the client meant their local clock time, the meeting is <b>SG ${fmtDate(SG_TZ, altUtc)}, ${fmtTime24(SG_TZ, altUtc)}</b> (shown above is the literal ${zone} reading). Safest to confirm with them.`;
+      warn.style.display = "";
+    }
+  }
+  out.style.display = "";
+};
+
+$("btn-conv-add").onclick = () => {
+  if (convertedUtc == null) return;
+  addEvent("Client proposed time", convertedUtc, convertedUtc + state.duration * 60000);
+};
+
+// default converter date: today (client side)
+(() => {
+  const nc = partsIn(state.clientTz, Date.now());
+  $("c-date").value = `${nc.y}-${pad(nc.mo + 1)}-${pad(nc.d)}`;
+  $("c-time").value = "09:00";
 })();
 
 renderAll();
