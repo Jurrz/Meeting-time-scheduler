@@ -49,17 +49,22 @@
   label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: #454B63; }
   .err { color: #B3403A; font-size: 12px; margin-top: 8px; }
   .hint { font-size: 11.5px; color: #6B7080; margin-top: 10px; line-height: 1.5; }
-  .week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
-  @media (max-width: 760px) { .week { grid-template-columns: repeat(2, 1fr); } }
-  .day { border: 1px solid #E9EAEF; border-radius: 10px; min-height: 380px; background: #fff; overflow: hidden; }
-  .day.today { border: 2px solid #2F2E5F; background: #F7F7FC; }
-  .day-head { font-size: 12px; font-weight: 700; padding: 7px 8px; background: #F1F2F5; color: #454B63; }
-  .day.today .day-head { background: #2F2E5F; color: #fff; }
-  .day-body { padding: 7px; display: flex; flex-direction: column; gap: 6px; }
-  .free { font-size: 11px; color: #B9BDC9; text-align: center; padding-top: 150px; }
-  .chip { background: #EEF3F0; border-left: 3px solid #1F7A5C; border-radius: 6px; padding: 6px 7px; position: relative; }
-  .chip .t { font-size: 11.5px; font-weight: 700; color: #1F7A5C; }
-  .chip .n { font-size: 12px; margin-top: 2px; padding-right: 12px; word-break: break-word; }
+  .week-wrap { overflow-x: auto; }
+  .week { display: flex; min-width: 940px; border: 1px solid #E9EAEF; border-radius: 10px; overflow: hidden; }
+  .time-axis { width: 46px; flex: none; background: #FAFAFC; }
+  .time-axis .head-spacer { height: 32px; border-bottom: 1px solid #E9EAEF; }
+  .time-axis .h { height: 44px; font-size: 10px; color: #8A8FA0; text-align: right; padding-right: 6px; }
+  .daycol { flex: 1; min-width: 118px; border-left: 1px solid #E9EAEF; }
+  .day-head { height: 32px; box-sizing: border-box; font-size: 12px; font-weight: 700; padding: 8px; background: #F1F2F5; color: #454B63; border-bottom: 1px solid #E9EAEF; white-space: nowrap; overflow: hidden; }
+  .daycol.today .day-head { background: #2F2E5F; color: #fff; }
+  .daycol.today .day-grid { background-color: #F7F7FC; }
+  .day-grid { position: relative; background-image: repeating-linear-gradient(to bottom, #EDEEF2 0, #EDEEF2 1px, transparent 1px, transparent 44px); }
+  .evb { position: absolute; border-radius: 6px; padding: 3px 6px; overflow: hidden; box-sizing: border-box; border-left: 3px solid; }
+  .evb .t { font-size: 10.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .evb .n { font-size: 11.5px; margin-top: 1px; overflow: hidden; }
+  .evb.ok { background: #EEF3F0; border-color: #1F7A5C; } .evb.ok .t { color: #1F7A5C; }
+  .evb.warn { background: #FFF1C6; border-color: #D9A420; } .evb.warn .t { color: #8A6A1F; }
+  .evb.bad { background: #FBE0DD; border-color: #C0392B; } .evb.bad .t { color: #B3403A; }
   .del { position: absolute; top: 2px; right: 4px; border: none; background: transparent; color: #8A8FA0; font-size: 14px; line-height: 1; padding: 2px; }
   .list-row { display: flex; gap: 12px; align-items: flex-start; border: 1px solid #E9EAEF; border-radius: 10px; padding: 10px 12px; position: relative; margin-bottom: 8px; }
   .list-date { font-size: 12px; font-weight: 700; color: #2F2E5F; min-width: 92px; padding-top: 2px; }
@@ -337,6 +342,23 @@ function weekDays() {
   return Array.from({ length: 7 }, (_, i) => monday + i * 86400000);
 }
 
+// 0 = well spaced (green), 1 = gap of 30 min or less (yellow), 2 = back-to-back or overlapping (red)
+function conflictStatus() {
+  const st = {};
+  state.events.forEach(e => st[e.id] = 0);
+  const evs = [...state.events].sort((a, b) => a.startUtc - b.startUtc);
+  for (let i = 0; i < evs.length; i++) for (let j = i + 1; j < evs.length; j++) {
+    const a = evs[i], b = evs[j];
+    const overlap = a.startUtc < b.endUtc && b.startUtc < a.endUtc;
+    const gap = b.startUtc - a.endUtc;
+    let s = 0;
+    if (overlap || gap === 0) s = 2;
+    else if (gap > 0 && gap <= 1800000) s = 1;
+    if (s) { st[a.id] = Math.max(st[a.id], s); st[b.id] = Math.max(st[b.id], s); }
+  }
+  return st;
+}
+
 function renderMain() {
   $("btn-cal").className = "seg-btn" + (state.view === "calendar" ? " on" : "");
   $("btn-list").className = "seg-btn" + (state.view === "list" ? " on" : "");
@@ -347,21 +369,53 @@ function renderMain() {
   if (state.view === "calendar") {
     const days = weekDays(), todayKey = dateKeySG(Date.now());
     $("btn-week").textContent = fmtDate(SG_TZ, days[0]).replace(/^\w+, /, "") + " – " + fmtDate(SG_TZ, days[6]).replace(/^\w+, /, "") + (state.weekOff === 0 ? " · this week" : "");
-    let html = '<div class="week">';
+    const status = conflictStatus();
+    const HOUR_PX = 44, DAY_PX = 24 * HOUR_PX;
+    let axis = '<div class="time-axis"><div class="head-spacer"></div>';
+    for (let h = 0; h < 24; h++) axis += `<div class="h">${pad(h)}:00</div>`;
+    axis += "</div>";
+    let cols = "";
     for (const dUtc of days) {
-      const k = dateKeySG(dUtc);
-      const evs = state.events.filter(e => dateKeySG(e.startUtc) === k).sort((a, b) => a.startUtc - b.startUtc);
-      html += `<div class="day ${k === todayKey ? "today" : ""}"><div class="day-head">${fmtDate(SG_TZ, dUtc)}</div><div class="day-body">`;
-      if (!evs.length) html += '<div class="free">free</div>';
-      for (const ev of evs) html += `<div class="chip"><div class="t">${fmtTime24(SG_TZ, ev.startUtc)}–${fmtTime24(SG_TZ, ev.endUtc)}</div><div class="n">${esc(ev.title)}</div><button class="del" data-del="${ev.id}" aria-label="Delete">×</button></div>`;
-      html += "</div></div>";
+      const k = dateKeySG(dUtc), dayEnd = dUtc + 86400000;
+      // events (or portions of events) that fall inside this SG day
+      const segs = [];
+      for (const ev of state.events) {
+        const s = Math.max(ev.startUtc, dUtc), e = Math.min(ev.endUtc, dayEnd);
+        if (e > s) segs.push({ ev, s, e });
+      }
+      segs.sort((a, b) => a.s - b.s);
+      for (let i = 0; i < segs.length; i++) {
+        segs[i].lane = 0; segs[i].overlapped = false;
+        for (let j = 0; j < i; j++) if (segs[j].s < segs[i].e && segs[i].s < segs[j].e) {
+          segs[i].overlapped = segs[j].overlapped = true;
+          segs[i].lane = segs[j].lane === 0 ? 1 : 0;
+        }
+      }
+      let body = "";
+      for (const sg of segs) {
+        const top = (sg.s - dUtc) / 60000 / 1440 * DAY_PX;
+        const h = Math.max(20, (sg.e - sg.s) / 60000 / 1440 * DAY_PX);
+        const cls = status[sg.ev.id] === 2 ? "bad" : status[sg.ev.id] === 1 ? "warn" : "ok";
+        const left = sg.overlapped ? (sg.lane === 0 ? "2%" : "50%") : "2%";
+        const width = sg.overlapped ? "48%" : "96%";
+        const compact = h < 36;
+        body += `<div class="evb ${cls}" style="top:${top}px;height:${h}px;left:${left};width:${width}">` +
+          (compact
+            ? `<div class="t">${fmtTime24(SG_TZ, sg.ev.startUtc)} ${esc(sg.ev.title)}</div>`
+            : `<div class="t">${fmtTime24(SG_TZ, sg.ev.startUtc)}–${fmtTime24(SG_TZ, sg.ev.endUtc)}</div><div class="n">${esc(sg.ev.title)}</div>`) +
+          `<button class="del" data-del="${sg.ev.id}" aria-label="Delete">×</button></div>`;
+      }
+      cols += `<div class="daycol ${k === todayKey ? "today" : ""}"><div class="day-head">${fmtDate(SG_TZ, dUtc)}</div><div class="day-grid" style="height:${DAY_PX}px">${body}</div></div>`;
     }
-    $("main-view").innerHTML = html + "</div>";
+    $("main-view").innerHTML = `<div class="week-wrap"><div class="week">${axis}${cols}</div></div>` +
+      `<div class="legend" style="margin-top:8px">Spacing check: <span style="color:#1F7A5C;font-weight:700">green</span> = well spaced · <span style="color:#B7871A;font-weight:700">yellow</span> = gap of 30 min or less to another event · <span style="color:#B3403A;font-weight:700">red</span> = back-to-back or overlapping</div>`;
   } else {
     if (!state.events.length) { $("main-view").innerHTML = '<div class="empty">No events yet. Add one above, or book a suggested slot →</div>'; return; }
+    const status = conflictStatus();
+    const COLORS = { 0: "#1F7A5C", 1: "#D9A420", 2: "#C0392B" };
     let html = "";
     for (const ev of [...state.events].sort((a, b) => a.startUtc - b.startUtc)) {
-      html += `<div class="list-row"><div class="list-date">${fmtDate(SG_TZ, ev.startUtc)}</div><div style="flex:1"><div class="list-title">${esc(ev.title)}</div><div class="list-times"><span><b>SG</b> ${fmtTime(SG_TZ, ev.startUtc)}–${fmtTime(SG_TZ, ev.endUtc)}</span><span style="color:#B9BDC9">·</span><span><b>${cl}</b> ${fmtTime(state.clientTz, ev.startUtc)}–${fmtTime(state.clientTz, ev.endUtc)} (${fmtDate(state.clientTz, ev.startUtc)})</span></div></div><button class="del" data-del="${ev.id}" aria-label="Delete">×</button></div>`;
+      html += `<div class="list-row" style="border-left:4px solid ${COLORS[status[ev.id]]}"><div class="list-date">${fmtDate(SG_TZ, ev.startUtc)}</div><div style="flex:1"><div class="list-title">${esc(ev.title)}</div><div class="list-times"><span><b>SG</b> ${fmtTime(SG_TZ, ev.startUtc)}–${fmtTime(SG_TZ, ev.endUtc)}</span><span style="color:#B9BDC9">·</span><span><b>${cl}</b> ${fmtTime(state.clientTz, ev.startUtc)}–${fmtTime(state.clientTz, ev.endUtc)} (${fmtDate(state.clientTz, ev.startUtc)})</span>${status[ev.id] ? `<span style="color:${COLORS[status[ev.id]]};font-weight:600">${status[ev.id] === 2 ? "⚠ back-to-back / overlap" : "⚠ tight gap (≤30 min)"}</span>` : ""}</div></div><button class="del" data-del="${ev.id}" aria-label="Delete">×</button></div>`;
     }
     $("main-view").innerHTML = html;
   }
